@@ -919,12 +919,9 @@
       setStatus("Computing token probabilities…", "loading");
 
       try {
-        // Tokenize sentence
-        const encoded = await tokenizer.encode(sentence);
-        const rawIds = Array.isArray(encoded)
-          ? encoded
-          : (encoded.data ? Array.from(encoded.data) : Array.from(encoded));
-        const sentenceTokenIds = rawIds.map(Number);
+        // Tokenize sentence using the v3 API (returns object with input_ids tensor)
+        const tokenized = tokenizer(sentence, { add_special_tokens: false });
+        const sentenceTokenIds = Array.from(tokenized.input_ids.data).map(Number);
 
         if (sentenceTokenIds.length === 0) {
           showError("Sentence contains no valid tokens.");
@@ -935,18 +932,27 @@
 
         // Prepend start marker 50256 (<|endoftext|>) so first token also gets a probability
         const allIds = [50256, ...sentenceTokenIds];
+        const seqLen = allIds.length;
 
-        // Construct int64 Tensor for Transformers.js
+        // Build int64 input_ids tensor (shape [1, seqLen])
         const input_ids = new Tensor(
           "int64",
           BigInt64Array.from(allIds.map(id => BigInt(id))),
-          [1, allIds.length]
+          [1, seqLen]
+        );
+
+        // Transformers.js v3 requires attention_mask — all 1s (attend to every token)
+        const attention_mask = new Tensor(
+          "int64",
+          BigInt64Array.from(Array(seqLen).fill(1n)),
+          [1, seqLen]
         );
 
         // Run the model once on all token IDs
-        const output = await model({ input_ids });
+        const output = await model({ input_ids, attention_mask });
         const logits = output.logits;
-        const [batch, seqLen, vocabSize] = logits.dims;
+        // logits shape: [1, seqLen, vocabSize]
+        const vocabSize = logits.dims[2];
         const logitsData = logits.data;
 
         // Process token probabilities for Section 2
